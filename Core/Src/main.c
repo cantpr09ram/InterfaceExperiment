@@ -20,10 +20,11 @@
 #include "main.h"
 #include "string.h"
 
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "keypad.h"
+#include "stdio.h"
+#include "stdbool.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,7 +48,12 @@ ETH_TxPacketConfig TxConfig;
 ETH_DMADescTypeDef  DMARxDscrTab[ETH_RX_DESC_CNT]; /* Ethernet Rx DMA Descriptors */
 ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptors */
 
+ADC_HandleTypeDef hadc1;
+
 ETH_HandleTypeDef heth;
+
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart3;
 
@@ -63,13 +69,41 @@ static void MX_GPIO_Init(void);
 static void MX_ETH_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+//for photoresistor
+//UART buffer
+char str[64];
+//for motor
+//
+// Light threshold constants
+#define LDR_OPEN_THRESHOLD   100U
+#define LDR_CLOSE_THRESHOLD   60U
+// Servo pulse constants (250–1250 counts for 0.5–2.5 ms)
+#define SERVO_STEP_DEGREE    10U
+/* USER CODE END PD */
 
+/* USER CODE BEGIN PV */
+// Motor open/close state
+static bool motorOpen = false;
+// Current servo angle
+static uint8_t servoAngle = 0;
+void Set_Servo_Angle(TIM_HandleTypeDef *htim, uint32_t channel, uint8_t angle){
+	//angle(0-180)to pulse width(250-1250 counts)
+	//250 for 0.5ms(0 degree) and 1250 for 2.5ms(180 degree)
+	uint32_t pulse_length = 250 +(angle *(1250-250)/180);
+	__HAL_TIM_SET_COMPARE(htim, channel, pulse_length);
+}
+//Timer
+volatile uint32_t countdown_ms = 0;
+static bool timer_started = false;
 /* USER CODE END 0 */
 
 /**
@@ -104,7 +138,13 @@ int main(void)
   MX_ETH_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
+  MX_ADC1_Init();
+  MX_TIM2_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+  //keypad
+  //
+  //
   GPIO_TypeDef* rowPorts[ROW_NUM] = {GPIOD, GPIOD, GPIOD, GPIOD};
   uint16_t rowPins[ROW_NUM] = {row1_Pin, row2_Pin, row3_Pin, row4_Pin};
 
@@ -116,12 +156,28 @@ int main(void)
   Keypad_Init();
 
   typedef enum { //mode
-      MODE_A,
-      MODE_B,
-      MODE_C
+        MODE_A,
+        MODE_B,
+		MODE_C
   } Mode;
 
-  Mode currentMode = MODE_A;
+  static Mode currentMode = MODE_A;
+  static Mode previousMode = MODE_C;
+  //photoresistor
+  //
+  //
+  HAL_ADC_Start(&hadc1);
+  uint32_t adc_value=0;
+  float voltage=0;
+  //motor
+  //
+  //
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  //timer
+  //
+  //
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -129,39 +185,139 @@ int main(void)
   while (1)
   {
 	  char key = Keypad_Scan();
-	      if (key) {
-	          // 切換模式
-	          if (key == 'A' || key == 'B' || key == 'C') {
-	              switch (key) {
-	                  case 'A': currentMode = MODE_A; break;
-	                  case 'B': currentMode = MODE_B; break;
-	                  case 'C': currentMode = MODE_C; break;
-	              }
-	              // 回傳目前模式給上位機顯示
-	              HAL_UART_Transmit(&huart3, (uint8_t*)&key, 1, 100);
-	          }
-	          else if (key >= '0' && key <= '9') {
-	        	  int value = key - '0';
-	        	  char msg[16];  // 足夠放 "<digit>-modeX\0"
-	              switch (currentMode) {
-	              	  case MODE_A:
-	              		  snprintf(msg, sizeof(msg), "%d-modeA", value);
-	                      	  break;
-	                  case MODE_B:
-	                      snprintf(msg, sizeof(msg), "%d-modeB", value);
-	                          break;
-	                  case MODE_C:
-	                      snprintf(msg, sizeof(msg), "%d-modeC", value);
-	                           break;
-	              }
-	              HAL_UART_Transmit(&huart3, (uint8_t*)msg, strlen(msg), 100);
-	          }
+	      if (key == 'A')      currentMode = MODE_A;
+	      else if (key == 'B') currentMode = MODE_B;
+	      else if (key == 'C') currentMode = MODE_C;
+          char state = "close";
+
+          if (currentMode != previousMode) {
+        	  switch (currentMode) {
+              	  case MODE_A:
+              		  HAL_UART_Transmit(&huart3, (uint8_t*)"Enter Mode A\r\n", 13, 100);
+                      break;
+              	  case MODE_B:
+              		  HAL_UART_Transmit(&huart3, (uint8_t*)"Enter Mode B\r\n", 13, 100);
+              		  break;
+                  case MODE_C:
+                      HAL_UART_Transmit(&huart3, (uint8_t*)"Enter Mode C\r\n", 13, 100);
+                      break;
+                  }
+                  previousMode = currentMode;
+              }
+
+	      switch (currentMode) {
+			  case MODE_A: {
+				  // Start ADC in continuous conversion mode once
+				  HAL_ADC_Start(&hadc1);
+
+				  // Stay in Mode A until changed
+				  while (currentMode == MODE_A) {
+					  // 1) Poll ADC conversion
+					  // Start ADC in continuous conversion mode once
+						 HAL_ADC_Start(&hadc1);
+					  if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
+						  uint32_t raw = HAL_ADC_GetValue(&hadc1);
+
+						  float mv = raw * 3300.0f / 4095.0f;
+
+						  // Transmit raw LDR value and voltage for testing
+						  sprintf(str, "LDR raw=%4lu, %6.1f mV\r\n", raw, mv);
+						  HAL_UART_Transmit(&huart3, (uint8_t*)str, strlen(str), 100);
+						  // 2) Threshold check: open if above open threshold
+						  if (!motorOpen && raw >= LDR_OPEN_THRESHOLD) {
+							  motorOpen = true;
+						  }
+						  //    close if below close threshold
+						  else if (motorOpen && raw <= LDR_CLOSE_THRESHOLD) {
+							  motorOpen = false;
+						  }
+
+						  // 3) Move servo one step toward target
+						  if (motorOpen && servoAngle < 180) {
+							  servoAngle += SERVO_STEP_DEGREE;
+						  } else if (!motorOpen && servoAngle > 0) {
+							  servoAngle -= SERVO_STEP_DEGREE;
+						  }
+						  Set_Servo_Angle(&htim2, TIM_CHANNEL_1, servoAngle);
+
+						  // 4) UART feedback
+						  sprintf(str,"LDR=%3lu, Motor=%s, Angle=%3u\r\n", raw, motorOpen ? "OPEN" : "CLOSE", servoAngle);
+						  HAL_UART_Transmit(&huart3, (uint8_t*)str, strlen(str), 100);
+						  __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_EOC);
+					  }
+
+					  // 5) Check for exit key
+					  char exitKey = Keypad_Scan();
+					  if (exitKey == 'B') {
+						  currentMode = MODE_B;
+					  } else if (exitKey == 'C') {
+						  currentMode = MODE_C;
+					  }
+
+					  HAL_Delay(500);
+				  }
+				  break;
+			  } // end case MODE_A
+
+			  case MODE_B: {
+			      // use the 'key' already read at top of while()
+			      if (key >= '0' && key <= '9') {
+			          // 1) convert input to seconds
+			          uint32_t seconds = key - '0';
+			          countdown_ms = seconds * 1000U;
+			          timer_started = true;
+
+			          // 2) UART feedback
+			          sprintf(str, "Start countdown: %lu s\r\n", seconds);
+			          HAL_UART_Transmit(&huart3, (uint8_t*)str, strlen(str), 100);
+
+			          // 3) reset and start TIM4 interrupt
+			          __HAL_TIM_SET_COUNTER(&htim4, 0);
+			          HAL_TIM_Base_Start_IT(&htim4);
+			      }
+
+			      // 4) non-blocking check: countdown finished?
+			      if (timer_started && countdown_ms == 0) {
+			          timer_started = false;
+
+			          // toggle motor here (move servo)
+			          if (motorOpen) {
+			              // close motor: sweep 180→0
+			              for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
+			                  Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+			                  HAL_Delay(50);
+			              }
+			              motorOpen = false;
+			              sprintf(str, "Motor CLOSED\r\n");
+			          } else {
+			              // open motor: sweep 0→180
+			              for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
+			                  Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+			                  HAL_Delay(50);
+			              }
+			              motorOpen = true;
+			              sprintf(str, "Motor OPENED\r\n");
+			          }
+			          HAL_UART_Transmit(&huart3, (uint8_t*)str, strlen(str), 100);
+			      }
+			      break;
+			  }
+	              case MODE_C:
+	                  if (key >= '0' && key <= '9') {
+	                      snprintf(str, sizeof(str), "%c-modeC\r\n", key);
+	                      HAL_UART_Transmit(&huart3, (uint8_t*)str,
+	                                        strlen(str), 100);
+	                  }
+	                  break;
+
+	              default:
+	                  break;
 	      }
-	      HAL_Delay(100);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
+  /* USER CODE END 3 */
 }
 
 /**
@@ -210,6 +366,58 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_10;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
   * @brief ETH Initialization Function
   * @param None
   * @retval None
@@ -255,6 +463,100 @@ static void MX_ETH_Init(void)
   /* USER CODE BEGIN ETH_Init 2 */
 
   /* USER CODE END ETH_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 168;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 10000-1;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 8399;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 9;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
 
 }
 
@@ -398,6 +700,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+// This callback runs every 1 ms when TIM4 update interrupt fires
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM4 && countdown_ms > 0) {
+        countdown_ms--;
+    }
+}
 
 /* USER CODE END 4 */
 
