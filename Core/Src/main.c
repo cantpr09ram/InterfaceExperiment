@@ -114,17 +114,50 @@ int main(void)
   Keypad_SetRowPins(rowPorts, rowPins);
   Keypad_SetColPins(colPorts, colPins);
   Keypad_Init();
+
+  typedef enum { //mode
+      MODE_A,
+      MODE_B,
+      MODE_C
+  } Mode;
+
+  Mode currentMode = MODE_A;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      char key = Keypad_Scan();
-      if (key) {
-          HAL_UART_Transmit(&huart3, (uint8_t*)&key, 1, 100);
-      }
-      HAL_Delay(100);
+	  char key = Keypad_Scan();
+	      if (key) {
+	          // 切換模式
+	          if (key == 'A' || key == 'B' || key == 'C') {
+	              switch (key) {
+	                  case 'A': currentMode = MODE_A; break;
+	                  case 'B': currentMode = MODE_B; break;
+	                  case 'C': currentMode = MODE_C; break;
+	              }
+	              // 回傳目前模式給上位機顯示
+	              HAL_UART_Transmit(&huart3, (uint8_t*)&key, 1, 100);
+	          }
+	          else if (key >= '0' && key <= '9') {
+	        	  int value = key - '0';
+	        	  char msg[16];  // 足夠放 "<digit>-modeX\0"
+	              switch (currentMode) {
+	              	  case MODE_A:
+	              		  snprintf(msg, sizeof(msg), "%d-modeA", value);
+	                      	  break;
+	                  case MODE_B:
+	                      snprintf(msg, sizeof(msg), "%d-modeB", value);
+	                          break;
+	                  case MODE_C:
+	                      snprintf(msg, sizeof(msg), "%d-modeC", value);
+	                           break;
+	              }
+	              HAL_UART_Transmit(&huart3, (uint8_t*)msg, strlen(msg), 100);
+	          }
+	      }
+	      HAL_Delay(100);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
