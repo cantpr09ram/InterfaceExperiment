@@ -104,6 +104,12 @@ void Set_Servo_Angle(TIM_HandleTypeDef *htim, uint32_t channel, uint8_t angle){
 //Timer
 volatile uint32_t countdown_ms = 0;
 static bool timer_started = false;
+
+//Sound
+#define SOUND_GPIO_PORT GPIOC
+#define SOUND_PIN       GPIO_PIN_6
+
+static GPIO_PinState prevSoundState = GPIO_PIN_RESET;
 /* USER CODE END 0 */
 
 /**
@@ -302,16 +308,47 @@ int main(void)
 			      }
 			      break;
 			  }
-	              case MODE_C:
-	                  if (key >= '0' && key <= '9') {
-	                      snprintf(str, sizeof(str), "%c-modeC\r\n", key);
-	                      HAL_UART_Transmit(&huart3, (uint8_t*)str,
-	                                        strlen(str), 100);
-	                  }
-	                  break;
+			  case MODE_C: {
+			      // 1) Read digital output from sound sensor
+			      GPIO_PinState curSound = HAL_GPIO_ReadPin(SOUND_GPIO_PORT, SOUND_PIN);
 
-	              default:
-	                  break;
+			      // --- DEBUG: print current & previous sound states ---
+			      //  curSound==1 means HIGH (sound detected), 0 means LOW
+			      sprintf(str, "Sound State: prev=%d, cur=%d\r\n", prevSoundState == GPIO_PIN_SET, curSound == GPIO_PIN_SET);
+			      HAL_UART_Transmit(&huart3, (uint8_t*)str, strlen(str), 100);
+
+			      // 2) Detect rising edge: LOW -> HIGH
+			      if (curSound == GPIO_PIN_SET && prevSoundState == GPIO_PIN_RESET) {
+			          // 3) Toggle motor
+			          if (motorOpen) {
+			              // Close servo: sweep 180 → 0
+			              for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
+			                  Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+			                  HAL_Delay(50);
+			              }
+			              motorOpen = false;
+			              sprintf(str, "Mode C: Motor CLOSED\r\n");
+			          } else {
+			              // Open servo: sweep 0 → 180
+			              for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
+			                  Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+			                  HAL_Delay(50);
+			              }
+			              motorOpen = true;
+			              sprintf(str, "Mode C: Motor OPENED\r\n");
+			          }
+			          HAL_UART_Transmit(&huart3,
+			                            (uint8_t*)str,
+			                            strlen(str),
+			                            100);
+			      }
+
+			      // 4) Update previous state for next loop
+			      prevSoundState = curSound;
+			      break;
+			  }
+	          default:
+	               break;
 	      }
     /* USER CODE END WHILE */
 
@@ -682,8 +719,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : col1_Pin col2_Pin col3_Pin col4_Pin */
-  GPIO_InitStruct.Pin = col1_Pin|col2_Pin|col3_Pin|col4_Pin;
+  /*Configure GPIO pins : PC6 col1_Pin col2_Pin col3_Pin
+                           col4_Pin */
+  GPIO_InitStruct.Pin = GPIO_PIN_6|col1_Pin|col2_Pin|col3_Pin
+                          |col4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
