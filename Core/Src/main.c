@@ -102,7 +102,7 @@ char str[64];
 // Motor open/close state
 static bool motorOpen = false;
 // Current servo angle
-static uint8_t servoAngle = 0;
+//static uint8_t servoAngle = 0;
 
 void Set_Servo_Angle(TIM_HandleTypeDef *htim, uint32_t channel, uint8_t angle) {
     //angle(0-180)to pulse width(250-1250 counts)
@@ -242,19 +242,25 @@ int main(void) {
                         else if (motorOpen && raw <= LDR_CLOSE_THRESHOLD) {
                             motorOpen = false;
                         }
-
-                        // 3) Move servo one step toward target
-                        if (motorOpen && servoAngle < 180) {
-                            servoAngle += SERVO_STEP_DEGREE;
-                        } else if (!motorOpen && servoAngle > 0) {
-                            servoAngle -= SERVO_STEP_DEGREE;
+                        // 3) Toggle motor
+                        if (motorOpen) {
+                            // Close servo: sweep 180 → 0
+                            for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
+                                Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                                HAL_Delay(50);
+                            }
+                            motorOpen = false;
+                            sprintf(str, "Mode C: Motor CLOSED\r\n");
+                        } else {
+                            // Open servo: sweep 0 → 180
+                            for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
+                                Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                                HAL_Delay(50);
+                            }
+                            motorOpen = true;
+                            sprintf(str, "Mode C: Motor OPENED\r\n");
                         }
-                        Set_Servo_Angle(&htim2, TIM_CHANNEL_1, servoAngle);
-
-                        // 4) UART feedback
-                        sprintf(str, "LDR=%3lu, Motor=%s, Angle=%3u\r\n", raw, motorOpen ? "OPEN" : "CLOSE",
-                                servoAngle);
-                        HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str), 100);
+                        HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str),100);
                         __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_EOC);
                     }
 
@@ -344,10 +350,7 @@ int main(void) {
                         motorOpen = true;
                         sprintf(str, "Mode C: Motor OPENED\r\n");
                     }
-                    HAL_UART_Transmit(&huart3,
-                                      (uint8_t *) str,
-                                      strlen(str),
-                                      100);
+                    HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str),100);
                 }
 
                 // 4) Update previous state for next loop
