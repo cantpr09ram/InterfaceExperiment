@@ -93,7 +93,7 @@ char str[64];
 //
 // Light threshold constants
 #define LDR_OPEN_THRESHOLD   100U
-#define LDR_CLOSE_THRESHOLD   60U
+#define LDR_CLOSE_THRESHOLD   40U
 // Servo pulse constants (250–1250 counts for 0.5–2.5 ms)
 #define SERVO_STEP_DEGREE    10U
 /* USER CODE END PD */
@@ -196,6 +196,7 @@ int main(void) {
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
     while (1) {
+        
         char key = Keypad_Scan();
         if (key == 'A') currentMode = MODE_A;
         else if (key == 'B') currentMode = MODE_B;
@@ -234,36 +235,33 @@ int main(void) {
                         // Transmit raw LDR value and voltage for testing
                         sprintf(str, "LDR raw=%4lu, %6.1f mV\r\n", raw, mv);
                         HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str), 100);
-                        // 2) Threshold check: open if above open threshold
-                        if (!motorOpen && raw >= LDR_OPEN_THRESHOLD) {
-                            motorOpen = true;
-                        }
-                        //    close if below close threshold
-                        else if (motorOpen && raw <= LDR_CLOSE_THRESHOLD) {
-                            motorOpen = false;
-                        }
-                        // 3) Toggle motor
-                        if (motorOpen) {
-                            // Close servo: sweep 180 → 0
-                            for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
-                                Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
-                                HAL_Delay(50);
-                            }
-                            motorOpen = false;
-                            sprintf(str, "Mode C: Motor CLOSED\r\n");
-                        } else {
-                            // Open servo: sweep 0 → 180
-                            for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
-                                Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
-                                HAL_Delay(50);
-                            }
-                            motorOpen = true;
-                            sprintf(str, "Mode C: Motor OPENED\r\n");
-                        }
-                        HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str),100);
-                        __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_EOC);
-                    }
 
+                        // 3) Toggle motor
+                        if (raw <= 500) {
+                            if (!motorOpen && raw <=250 ) {
+                                // Close servo: sweep 180 → 0
+                                Set_Servo_Angle(&htim2, TIM_CHANNEL_1, 0);
+                                // for (uint8_t a = 80; a >= 0; a -= SERVO_STEP_DEGREE) {
+                                //     Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                                // }
+                                HAL_Delay(50);
+                                motorOpen = true;
+                                sprintf(str, "Mode A: Motor CLOSED\r\n");
+                            } else if(motorOpen && raw >250){
+                                // Open servo: sweep 0 → 180
+                                Set_Servo_Angle(&htim2, TIM_CHANNEL_1, 100);
+                                // for (uint8_t a = 0; a <= 80; a += SERVO_STEP_DEGREE) {
+                                //     Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                                //     HAL_Delay(50);
+                                // }
+                                HAL_Delay(50);
+                                motorOpen = false;
+                                sprintf(str, "Mode A: Motor OPENED\r\n");
+                            }
+                            HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str),100);
+                            __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_EOC);
+                        }
+                    }
                     // 5) Check for exit key
                     char exitKey = Keypad_Scan();
                     if (exitKey == 'B') {
@@ -300,19 +298,21 @@ int main(void) {
 
                     // toggle motor here (move servo)
                     if (motorOpen) {
-                        // close motor: sweep 180→0
-                        for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
-                            Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
-                            HAL_Delay(50);
-                        }
+                        // close motor: sweep 160→0
+                        Set_Servo_Angle(&htim2, TIM_CHANNEL_1, 0);
+                        // for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
+                        //     Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                        //     HAL_Delay(50);
+                        // }
                         motorOpen = false;
                         sprintf(str, "Motor CLOSED\r\n");
                     } else {
-                        // open motor: sweep 0→180
-                        for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
-                            Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
-                            HAL_Delay(50);
-                        }
+                        // open motor: sweep 0→160
+                        Set_Servo_Angle(&htim2, TIM_CHANNEL_1, 100);
+                        // for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
+                        //     Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                        //     HAL_Delay(50);
+                        // }
                         motorOpen = true;
                         sprintf(str, "Motor OPENED\r\n");
                     }
@@ -335,27 +335,39 @@ int main(void) {
                     // 3) Toggle motor
                     if (motorOpen) {
                         // Close servo: sweep 180 → 0
-                        for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
-                            Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
-                            HAL_Delay(50);
-                        }
+                        Set_Servo_Angle(&htim2, TIM_CHANNEL_1, 0);
+                        // for (uint8_t a = 180; a > 0; a -= SERVO_STEP_DEGREE) {
+                        //     Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                        //     HAL_Delay(50);
+                        // }
                         motorOpen = false;
                         sprintf(str, "Mode C: Motor CLOSED\r\n");
                     } else {
                         // Open servo: sweep 0 → 180
-                        for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
-                            Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
-                            HAL_Delay(50);
-                        }
+                        Set_Servo_Angle(&htim2, TIM_CHANNEL_1, 100);
+                        // for (uint8_t a = 0; a <= 180; a += SERVO_STEP_DEGREE) {
+                        //     Set_Servo_Angle(&htim2, TIM_CHANNEL_1, a);
+                        //     HAL_Delay(50);
+                        // }
                         motorOpen = true;
                         sprintf(str, "Mode C: Motor OPENED\r\n");
                     }
                     HAL_UART_Transmit(&huart3, (uint8_t *) str, strlen(str),100);
-                }
 
+                }
+                HAL_Delay(500);
                 // 4) Update previous state for next loop
                 prevSoundState = curSound;
                 break;
+
+                char exitKey = Keypad_Scan();
+                if (exitKey == 'B') {
+                    currentMode = MODE_B;
+                } else if (exitKey == 'C') {
+                    currentMode = MODE_C;
+                }
+
+                HAL_Delay(500);
             }
             default:
                 break;
